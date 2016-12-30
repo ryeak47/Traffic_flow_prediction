@@ -1,9 +1,10 @@
 import pandas as pd
 import numpy as np
 from keras.models import Sequential
-from keras.layers import Dense, Dropout, Activation
+from keras.layers import Dense, Dropout, Activation, Bidirectional
 from keras.layers import LSTM, GRU
 from sklearn.metrics import mean_squared_error
+from keras.callbacks import EarlyStopping
 import math
 
 
@@ -76,23 +77,32 @@ def ProcessOneColumn(batch_size, column, feature_col, seq_len):
     return X_train, y_train, X_test, y_test
 print 'Building data set successfully!'
 
-def CreateModel(model_type, X_train, Y_train, n_epoch=10, num_nerous=64, features=1,  batch_size=100):
+def CreateModel(model_type, num_nerous=64, features=1, seq_len=6):
     model = Sequential()
     if(model_type=='LSTM'):
-        model.add(LSTM(num_nerous, input_dim=features))
+        # model.add(Bidirectional(LSTM(output_dim=num_nerous), input_shape=(seq_len,features)))
+        model.add(LSTM(output_dim=num_nerous, input_dim=features, input_length=seq_len))
     else:
-        model.add(GRU(num_nerous, input_dim=features))
+        # model.add(Bidirectional(GRU(output_dim=num_nerous), input_shape=(seq_len,features)))
+        model.add(GRU(output_dim=num_nerous, input_dim=features, input_length=seq_len))
+        # model.add(GRU(output_dim=num_nerous, input_shape=(seq_len, features)))
+    # model.add(Dropout(0.5))
     # model.add(Activation('sigmoid'))
     model.add(Dense(1))
+    # model.add(Activation('linear'))
     model.compile(loss='mean_squared_error', optimizer='adam')
 #     model.fit(X_train, Y_train, nb_epoch=n_epoch, batch_size=batch_size)
     return model
 
 def EvaluateColumn(model_type='LSTM',column=0, feature_col=[0], mape_const=0.0, rmse_const=1.0, n_epoch=1, batch_size=64, seq_len=6):
     # Invert predictions
-    X_train, y_train, X_test, y_test = ProcessOneColumn(batch_size=batch_size, column=column, feature_col=feature_col, seq_len=6)
-    model = CreateModel(model_type, X_train, y_train, n_epoch, num_nerous=64, features=len(feature_col))
-    model.fit(X_train, y_train, nb_epoch=n_epoch, batch_size=batch_size)
+    X_train, y_train, X_test, y_test = ProcessOneColumn(batch_size=batch_size, column=column, feature_col=feature_col, seq_len=seq_len)
+    model = CreateModel(model_type, num_nerous=64, features=len(feature_col), seq_len=seq_len)
+    # early_stopping = EarlyStopping(monitor='val_loss', patience=2)
+    # model.fit(X_train, y_train, nb_epoch=n_epoch, batch_size=batch_size,validation_split=0.1,callbacks=[early_stopping], shuffle=True)
+
+    # set verbose=0 to hide the verbose training process
+    model.fit(X_train, y_train, nb_epoch=n_epoch, batch_size=batch_size, shuffle=True, verbose=0)
     y_predict = model.predict(X_test)
 
     def mean_absolute_percentage_error(y_true, y_pred):
@@ -105,17 +115,60 @@ def EvaluateColumn(model_type='LSTM',column=0, feature_col=[0], mape_const=0.0, 
     print('Test Score: %.5f MAPE' % (MAPE))
     return MSE,MAPE
 relations = pd.read_csv('causality.txt',dtype='str',sep='\t',header=None)
-result = np.zeros([50,4])
+
+seq_len = 6
+result = np.zeros([50,8])
 for cols in xrange(50):
-    feature_cols = relations.ix[cols, 0].split(',')
-    # feature_cols = [cols]
+    # feature_cols = relations.ix[cols, 0].split(',')
+    print 'start column {}, single point'.format(cols)
+    feature_cols = [cols]
     rmse_const = train_std[cols]
     mape_const = train_avg[cols]/train_std[cols]
-    MSE,MAPE = EvaluateColumn('LSTM', cols, feature_cols,mape_const,rmse_const,n_epoch=25)
+
+    MSE,MAPE = EvaluateColumn('LSTM', cols, feature_cols,mape_const,rmse_const,n_epoch=25, seq_len=seq_len)
     result[cols,0] = MSE
     result[cols,1] = MAPE
-    MSE, MAPE = EvaluateColumn('GRU', cols, feature_cols, mape_const, rmse_const, n_epoch=25)
+
+    MSE, MAPE = EvaluateColumn('GRU', cols, feature_cols, mape_const, rmse_const, n_epoch=25, seq_len=seq_len)
     result[cols,2] = MSE
     result[cols,3] = MAPE
-np.savetxt('result.txt',result,fmt='%6.3f',delimiter=',',newline='\n',header='MSE(lstm),MAPE(lstm),MSE(gru),MAPE(gru)',footer='',comments='')
 
+    feature_cols = relations.ix[cols, 0].split(',')
+    print 'start column {}, multi point'.format(cols)
+    MSE,MAPE = EvaluateColumn('LSTM', cols, feature_cols,mape_const,rmse_const,n_epoch=25, seq_len=seq_len)
+    result[cols,4] = MSE
+    result[cols,5] = MAPE
+
+    MSE, MAPE = EvaluateColumn('GRU', cols, feature_cols, mape_const, rmse_const, n_epoch=25, seq_len=seq_len)
+    result[cols,6] = MSE
+    result[cols,7] = MAPE
+np.savetxt('result_seq_6_single_and_multi.csv',result,fmt='%6.3f',delimiter=',',newline='\n',header='MSE(LSTM),MAPE(LSTM),MSE(GRU),MAPE(GRU),MSE(LSTM),MAPE(LSTM),MSE(GRU),MAPE(GRU)',footer='',comments='')
+print 'finish the situation seq=6, congratulations!'
+seq_len = 30
+result = np.zeros([50,8])
+for cols in xrange(50):
+    # feature_cols = relations.ix[cols, 0].split(',')
+    print 'start column {}, single point'.format(cols)
+    feature_cols = [cols]
+    rmse_const = train_std[cols]
+    mape_const = train_avg[cols]/train_std[cols]
+
+    MSE,MAPE = EvaluateColumn('LSTM', cols, feature_cols,mape_const,rmse_const,n_epoch=25, seq_len=seq_len)
+    result[cols,0] = MSE
+    result[cols,1] = MAPE
+
+    MSE, MAPE = EvaluateColumn('GRU', cols, feature_cols, mape_const, rmse_const, n_epoch=25, seq_len=seq_len)
+    result[cols,2] = MSE
+    result[cols,3] = MAPE
+
+    feature_cols = relations.ix[cols, 0].split(',')
+    print 'start column {}, multi point'.format(cols)
+    MSE,MAPE = EvaluateColumn('LSTM', cols, feature_cols,mape_const,rmse_const,n_epoch=25, seq_len=seq_len)
+    result[cols,4] = MSE
+    result[cols,5] = MAPE
+
+    MSE, MAPE = EvaluateColumn('GRU', cols, feature_cols, mape_const, rmse_const, n_epoch=25, seq_len=seq_len)
+    result[cols,6] = MSE
+    result[cols,7] = MAPE
+np.savetxt('result_seq_30_single_and_multi.csv',result,fmt='%6.3f',delimiter=',',newline='\n',header='MSE(LSTM),MAPE(LSTM),MSE(GRU),MAPE(GRU),MSE(LSTM),MAPE(LSTM),MSE(GRU),MAPE(GRU)',footer='',comments='')
+print 'finish the situation seq=30, congratulations!'
